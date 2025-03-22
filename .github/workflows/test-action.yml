@@ -1,0 +1,89 @@
+name: Test Terraform Plan Analyzer
+
+on:
+  workflow_dispatch:
+    inputs:
+      test_mode:
+        description: 'Test mode (local_plan or terraform_cloud)'
+        required: true
+        default: 'local_plan'
+        type: choice
+        options:
+          - local_plan
+          - terraform_cloud
+
+jobs:
+  test-action:
+    name: Test Plan Analyzer
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Only run this step when testing with local plan
+      - name: Setup Terraform
+        if: ${{ github.event.inputs.test_mode == 'local_plan' }}
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.7.0"
+
+      # Option 1: Generate a local plan for testing
+      - name: Generate Local Plan
+        if: ${{ github.event.inputs.test_mode == 'local_plan' }}
+        run: |
+          # Create a simple test Terraform configuration
+          mkdir -p /tmp/test-tf
+          cat > /tmp/test-tf/main.tf << 'EOF'
+          resource "random_pet" "test" {
+            length = 2
+          }
+          
+          resource "local_file" "example" {
+            content  = "This is a test file"
+            filename = "${path.module}/example.txt"
+          }
+          EOF
+          
+          cat > /tmp/test-tf/versions.tf << 'EOF'
+          terraform {
+            required_providers {
+              random = {
+                source  = "hashicorp/random"
+                version = "~> 3.5.0"
+              }
+              local = {
+                source  = "hashicorp/local"
+                version = "~> 2.4.0"
+              }
+            }
+            required_version = ">= 1.1.0"
+          }
+          EOF
+          
+          # Initialize and create plan
+          cd /tmp/test-tf
+          terraform init
+          terraform plan -out=tf.plan
+          terraform show -json tf.plan > tf.plan.json
+          echo "Local plan created at /tmp/test-tf/tf.plan.json"
+
+      # Test Option 1: Analyze local plan file
+      - name: Test Action with Local Plan
+        if: ${{ github.event.inputs.test_mode == 'local_plan' }}
+        uses: ./
+        with:
+          plan_path: /tmp/test-tf/tf.plan.json
+          gemini_api_key: ${{ secrets.GEMINI_API_KEY }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+
+      # Test Option 2: Analyze plan from Terraform Cloud
+      - name: Test Action with Terraform Cloud
+        if: ${{ github.event.inputs.test_mode == 'terraform_cloud' }}
+        uses: ./
+        with:
+          tfc_enabled: 'true'
+          tfc_token: ${{ secrets.TFC_TOKEN }}
+          tfc_organization: ${{ secrets.TFC_ORG }}
+          tfc_workspace: ${{ secrets.TFC_WORKSPACE }}
+          gemini_api_key: ${{ secrets.GEMINI_API_KEY }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
