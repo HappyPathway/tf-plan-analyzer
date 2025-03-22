@@ -46,8 +46,18 @@ inputs:
     description: 'Workspace name in Terraform Cloud/Enterprise'
     required: false
   tfc_run_id:
-    description: 'Specific run ID to pull plan from (if not specified, will use latest run)'
+    description: 'Specific run ID to pull plan from (if not specified, will be auto-detected)'
     required: false
+  tfc_pr_number:
+    description: 'GitHub PR number to find the corresponding speculative plan for'
+    required: false
+  tfc_branch:
+    description: 'Branch name to find the corresponding speculative plan for'
+    required: false
+  tfc_max_wait_minutes:
+    description: 'Maximum time in minutes to wait for a plan to complete'
+    required: false
+    default: '15'
 
 outputs:
   has_issues:
@@ -94,7 +104,10 @@ runs:
           --organization "${{ inputs.tfc_organization }}" \
           --workspace "${{ inputs.tfc_workspace }}" \
           --output "$TEMP_PLAN_PATH" \
-          ${{ inputs.tfc_run_id != '' && format('--run-id "{0}"', inputs.tfc_run_id) || '' }}
+          ${{ inputs.tfc_run_id != '' && format('--run-id "{0}"', inputs.tfc_run_id) || '' }} \
+          ${{ inputs.tfc_pr_number != '' && format('--pr-number "{0}"', inputs.tfc_pr_number) || '' }} \
+          ${{ inputs.tfc_branch != '' && format('--branch "{0}"', inputs.tfc_branch) || '' }} \
+          --max-wait-minutes ${{ inputs.tfc_max_wait_minutes || '15' }}
           
         echo "plan_path=$TEMP_PLAN_PATH" >> $GITHUB_OUTPUT
         echo "Terraform Cloud/Enterprise plan fetched successfully"

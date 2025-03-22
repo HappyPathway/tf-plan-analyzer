@@ -101,6 +101,66 @@ jobs:
           github_token: ${{ secrets.GITHUB_TOKEN }}
 ```
 
+## Using with Terraform Cloud/Enterprise Speculative Plans
+
+When working with pull requests and Terraform Cloud/Enterprise, speculative plans are automatically generated when a PR is created on a branch that's configured in your workspace. To ensure the analyzer examines the correct speculative plan for your PR, you can use the PR number or branch parameters:
+
+```yaml
+name: Analyze Terraform Plan from PR
+on:
+  pull_request:
+    branches: [ main ]
+    paths:
+      - '**.tf'
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Analyze Terraform Plan from PR
+        uses: HappyPathway/tf-plan-analyzer@v1
+        with:
+          tfc_enabled: 'true'
+          tfc_token: ${{ secrets.TFC_TOKEN }}
+          tfc_organization: 'your-organization'
+          tfc_workspace: 'your-workspace'
+          # Use the PR number to find the corresponding speculative plan
+          tfc_pr_number: ${{ github.event.pull_request.number }}
+          # For workspaces that take longer to plan, increase the wait time (default: 15)
+          tfc_max_wait_minutes: '30'
+          gemini_api_key: ${{ secrets.GEMINI_API_KEY }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          issue_severity_threshold: 'medium'
+          fail_on_severity: 'high'
+```
+
+This workflow will:
+1. Be triggered whenever a PR that modifies `.tf` files is opened or updated
+2. Find the speculative plan in Terraform Cloud/Enterprise that corresponds to the PR
+3. Wait up to 30 minutes for the plan to complete (configurable with `tfc_max_wait_minutes`)
+4. Analyze that plan for security issues
+5. Post the results as a comment on the PR
+
+For complex repository structures where you're not sure which TFC workspace will be triggered, you can specify the branch name instead:
+
+```yaml
+# Example using branch name instead of PR number
+- name: Analyze Terraform Plan
+  uses: HappyPathway/tf-plan-analyzer@v1
+  with:
+    tfc_enabled: 'true'
+    tfc_token: ${{ secrets.TFC_TOKEN }}
+    tfc_organization: 'your-organization'
+    tfc_workspace: 'your-workspace'
+    # Use the branch name to find the corresponding speculative plan
+    tfc_branch: ${{ github.head_ref }}
+    tfc_max_wait_minutes: '45'  # Longer wait for complex infrastructure
+    gemini_api_key: ${{ secrets.GEMINI_API_KEY }}
+    github_token: ${{ secrets.GITHUB_TOKEN }}
+```
+
 ## Inputs
 
 | Input                   | Description                                                       | Required | Default           |
@@ -117,6 +177,7 @@ jobs:
 | `tfc_organization`      | Organization name in Terraform Cloud/Enterprise                   | No\*\*   | -                 |
 | `tfc_workspace`         | Workspace name in Terraform Cloud/Enterprise                      | No\*\*   | -                 |
 | `tfc_run_id`            | Specific run ID to pull plan from (if not specified, uses latest) | No       | -                 |
+| `tfc_max_wait_minutes`  | Maximum wait time in minutes for the plan to complete             | No       | 15                |
 
 \* Required if `tfc_enabled` is false  
 \*\* Required if `tfc_enabled` is true
