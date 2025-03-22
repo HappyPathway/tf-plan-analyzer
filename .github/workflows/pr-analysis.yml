@@ -1,0 +1,37 @@
+name: Terraform PR Analysis
+
+on:
+  pull_request:
+    paths:
+      - '**.tf'
+      - '**.tfvars'
+
+jobs:
+  analyze-terraform-plan:
+    name: Analyze Terraform Plan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.7.0"
+
+      - name: Terraform Init
+        run: terraform init
+
+      - name: Terraform Plan
+        run: |
+          terraform plan -out=tf.plan
+          terraform show -json tf.plan > tf.plan.json
+        
+      - name: Analyze Terraform Plan
+        uses: ./
+        with:
+          plan_path: tf.plan.json
+          gemini_api_key: ${{ secrets.GEMINI_API_KEY }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          include_plan_summary: 'true'
+          issue_severity_threshold: 'low'

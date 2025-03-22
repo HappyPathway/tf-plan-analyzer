@@ -1,0 +1,154 @@
+name: "Terraform Plan Analyzer"
+description: "Analyze Terraform plans for security and safety risks using Google's Gemini API"
+author: "HappyPathway"
+
+branding:
+  icon: 'shield'
+  color: 'blue'
+
+inputs:
+  plan_path:
+    description: 'Path to the Terraform plan JSON file to analyze (not required if using Terraform Cloud/Enterprise)'
+    required: false
+  gemini_api_key:
+    description: 'Google Gemini API key for AI analysis'
+    required: true
+  github_token:
+    description: 'GitHub token for creating PR comments with analysis results'
+    required: true
+  issue_severity_threshold:
+    description: 'Minimum severity level to flag as an issue (low, medium, high, critical)'
+    required: false
+    default: 'medium'
+  fail_on_severity:
+    description: 'The workflow will fail if issues at or above this severity are found (low, medium, high, critical)'
+    required: false
+    default: 'high'
+  include_plan_summary:
+    description: 'Include a simplified plan summary in the markdown PR comment'
+    required: false
+    default: 'true'
+  tfc_enabled:
+    description: 'Enable pulling plan from Terraform Cloud/Enterprise'
+    required: false
+    default: 'false'
+  tfc_token:
+    description: 'API token for Terraform Cloud/Enterprise'
+    required: false
+  tfc_host:
+    description: 'Hostname for Terraform Cloud/Enterprise instance'
+    required: false
+    default: 'app.terraform.io'
+  tfc_organization:
+    description: 'Organization name in Terraform Cloud/Enterprise'
+    required: false
+  tfc_workspace:
+    description: 'Workspace name in Terraform Cloud/Enterprise'
+    required: false
+  tfc_run_id:
+    description: 'Specific run ID to pull plan from (if not specified, will use latest run)'
+    required: false
+
+outputs:
+  has_issues:
+    description: 'True if security issues were found above the threshold'
+    value: ${{ steps.analyze-plan.outputs.has_issues }}
+  issue_count:
+    description: 'Number of security issues found'
+    value: ${{ steps.analyze-plan.outputs.issue_count }}
+  highest_severity:
+    description: 'Highest severity level found (low, medium, high, critical)'
+    value: ${{ steps.analyze-plan.outputs.highest_severity }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+        
+    - name: Install dependencies
+      shell: bash
+      run: |
+        python -m pip install --upgrade pip
+        pip install google-generativeai==0.3.1 pyyaml markdown jinja2 requests
+        
+    - name: Fetch plan from Terraform Cloud/Enterprise
+      id: fetch-tfc-plan
+      if: ${{ inputs.tfc_enabled == 'true' }}
+      shell: bash
+      run: |
+        TEMP_PLAN_PATH="/tmp/tfc-plan.json"
+        
+        # Validate required inputs for TFC mode
+        if [ -z "${{ inputs.tfc_token }}" ] || [ -z "${{ inputs.tfc_organization }}" ] || [ -z "${{ inputs.tfc_workspace }}" ]; then
+          echo "::error::When tfc_enabled is true, tfc_token, tfc_organization, and tfc_workspace are required"
+          exit 1
+        fi
+        
+        # Fetch plan from Terraform Cloud/Enterprise
+        python ${{ github.action_path }}/scripts/fetch_tfc_plan.py \
+          --token "${{ inputs.tfc_token }}" \
+          --host "${{ inputs.tfc_host }}" \
+          --organization "${{ inputs.tfc_organization }}" \
+          --workspace "${{ inputs.tfc_workspace }}" \
+          --output "$TEMP_PLAN_PATH" \
+          ${{ inputs.tfc_run_id != '' && format('--run-id "{0}"', inputs.tfc_run_id) || '' }}
+          
+        echo "plan_path=$TEMP_PLAN_PATH" >> $GITHUB_OUTPUT
+        echo "Terraform Cloud/Enterprise plan fetched successfully"
+        
+    - name: Validate Terraform plan
+      id: validate-plan
+      shell: bash
+      run: |
+        # Determine which plan path to use
+        if [ "${{ inputs.tfc_enabled }}" == "true" ]; then
+          PLAN_PATH="${{ steps.fetch-tfc-plan.outputs.plan_path }}"
+        else
+          if [ -z "${{ inputs.plan_path }}" ]; then
+            echo "::error::When tfc_enabled is false, plan_path is required"
+            exit 1
+          fi
+          PLAN_PATH="${{ inputs.plan_path }}"
+        fi
+        
+        if [ ! -f "$PLAN_PATH" ]; then
+          echo "::error::Terraform plan file not found at $PLAN_PATH"
+          exit 1
+        fi
+        
+        # Verify it's a valid JSON file
+        if ! jq . "$PLAN_PATH" > /dev/null 2>&1; then
+          echo "::error::Terraform plan file is not a valid JSON file"
+          exit 1
+        fi
+        
+        echo "plan_path=$PLAN_PATH" >> $GITHUB_OUTPUT
+        echo "Plan file validated successfully"
+        
+    - name: Analyze Terraform plan and post to PR
+      id: analyze-plan
+      shell: bash
+      run: |
+        # Generate the markdown analysis
+        TEMP_REPORT_PATH="/tmp/tf-plan-analysis.md"
+        PLAN_PATH="${{ steps.validate-plan.outputs.plan_path }}"
+        
+        python ${{ github.action_path }}/scripts/analyze_plan.py \
+          --plan-path "$PLAN_PATH" \
+          --api-key "${{ inputs.gemini_api_key }}" \
+          --severity-threshold "${{ inputs.issue_severity_threshold }}" \
+          --fail-level "${{ inputs.fail_on_severity }}" \
+          --output "$TEMP_REPORT_PATH" \
+          ${{ inputs.include_plan_summary == 'true' && '--include-plan-summary' || '' }}
+          
+        # Post analysis as PR comment
+        python ${{ github.action_path }}/scripts/post_pr_comment.py \
+          --report-path "$TEMP_REPORT_PATH" \
+          --github-token "${{ inputs.github_token }}" \
+          --repo "${{ github.repository }}" \
+          --pr-number "${{ github.event.pull_request.number }}"
+      env:
+        GEMINI_API_KEY: ${{ inputs.gemini_api_key }}
